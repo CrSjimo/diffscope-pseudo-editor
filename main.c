@@ -17,7 +17,10 @@ struct PlaybackParameters {
     double sampleRate;
     double tempo;
 
-    int64_t projectTimeSamples;
+    union {
+        int64_t projectTimeSamples;
+        int64_t systemTimeMs;
+    };
     double projectTimeMusic;
     double barPositionMusic;
 
@@ -32,46 +35,77 @@ DLL_EXPORT bool SingletonChecker() {
 float* buffer;
 int bufferSize = 0;
 
-DLL_EXPORT enum Result Initializer() {
-    FILE *file = fopen("D:\\dstest\\test.wav", "rb");
-    if(!file) return Failed;
+float* buffer2;
+int buffer2Size = 0;
+
+void (*setDirty)(bool) = NULL;
+
+float* readFile(const char* fileName, int* siz) {
+    FILE *file = fopen(fileName, "rb");
+    if(!file) return NULL;
     fseek(file, 40, SEEK_SET);
-    uint32_t dataSize;
-    fread(&dataSize, sizeof(uint32_t), 1, file);
-    buffer = (float*)malloc(dataSize * sizeof(float));
-    fread(buffer, dataSize * sizeof(float), 1, file);
-    bufferSize = dataSize;
+    fread(siz, sizeof(uint32_t), 1, file);
+    float* buf = (float*)malloc(*siz * sizeof(float));
+    fread(buf, *siz * sizeof(float), 1, file);
     fclose(file);
+    return buf;
+}
+
+DLL_EXPORT enum Result Initializer() {
+    buffer = readFile("D:\\dstest\\test.wav", &bufferSize);
+    if(!buffer) return Failed;
+    buffer2 = readFile("D:\\dstest\\test2.wav", &buffer2Size);
+    if(!buffer2) return Failed;
     return Ok;
 }
 
 DLL_EXPORT enum Result Terminator() {
     free(buffer);
+    free(buffer2);
     return Ok;
 }
 
 bool windowOpened = false;
 
 DLL_EXPORT void WindowOpener() {
+    if(setDirty) setDirty(true);
     if(!windowOpened) {
-        MessageBoxA(NULL, "Window Opened", "DiffScope VSTi", MB_OK|MB_ICONINFORMATION);
+        MessageBoxA(NULL, "Window Opened", "DiffScope Editor", MB_OK|MB_ICONINFORMATION);
         windowOpened = true;
     }
 }
 
 DLL_EXPORT void WindowCloser() {
     if(windowOpened) {
-        MessageBoxA(NULL, "Window Closed", "DiffScope VSTi", MB_OK|MB_ICONINFORMATION);
+        MessageBoxA(NULL, "Window Closed", "DiffScope Editor", MB_OK|MB_ICONINFORMATION);
         windowOpened = false;
     }
 }
 
-DLL_EXPORT enum Result PlaybackProcessor(const struct PlaybackParameters *playbackParameters,int32_t numOutputs, float *const *outputs) {
-    if(playbackParameters->projectTimeSamples + playbackParameters->numSamples >= bufferSize) {
-        return Failed;
-    }
-    for(int i = 0; i < numOutputs; i++) {
-        memcpy(outputs[i], buffer + playbackParameters->projectTimeSamples, playbackParameters->numSamples * sizeof(float));
+int64_t lastPos = 0;
+
+DLL_EXPORT enum Result PlaybackProcessor(const struct PlaybackParameters *playbackParameters, bool isPlaying, int32_t numOutputs, float *const *outputs) {
+    if(isPlaying) {
+        lastPos = 0;
+        if(playbackParameters->projectTimeSamples + playbackParameters->numSamples >= bufferSize) {
+            return Failed;
+        }
+        for(int i = 0; i < numOutputs; i++) {
+            memcpy(outputs[i], buffer + playbackParameters->projectTimeSamples, playbackParameters->numSamples * sizeof(float));
+        }
+    } else if(windowOpened) {
+        if(lastPos + playbackParameters->numSamples >= buffer2Size) {
+            return Failed;
+        }
+        for(int i = 0; i < numOutputs; i++) {
+            memcpy(outputs[i], buffer2 + lastPos, playbackParameters->numSamples * sizeof(float));
+        }
+        lastPos += playbackParameters->numSamples;
+    } else {
+        lastPos = 0;
+        for(int i = 0; i < numOutputs; i++) {
+            memset(outputs[i], 0, playbackParameters->numSamples * sizeof(float));
+        }
     }
     return Ok;
 }
@@ -98,4 +132,8 @@ DLL_EXPORT enum Result StateWillSaveCallback(uint64_t* size, uint8_t** data) {
 
 DLL_EXPORT void StateSavedAsyncCallback(uint8_t* dataToFree) {
     free(dataToFree);
+}
+
+DLL_EXPORT void DirtySetterBinder(void (*setDirty_)(bool)) {
+    setDirty = setDirty_;
 }
