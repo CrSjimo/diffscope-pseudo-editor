@@ -17,10 +17,7 @@ struct PlaybackParameters {
     double sampleRate;
     double tempo;
 
-    union {
-        int64_t projectTimeSamples;
-        int64_t systemTimeMs;
-    };
+    int64_t projectTimeSamples;
     double projectTimeMusic;
     double barPositionMusic;
 
